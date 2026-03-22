@@ -54,6 +54,91 @@ describe('GmailChannel', () => {
     });
   });
 
+  describe('extractTextBody', () => {
+    function callExtract(payload: unknown): string {
+      return (
+        channel as unknown as {
+          extractTextBody: (p: unknown) => string;
+        }
+      ).extractTextBody(payload);
+    }
+
+    it('extracts text/plain body', () => {
+      const payload = {
+        mimeType: 'text/plain',
+        body: { data: Buffer.from('Hello world').toString('base64') },
+      };
+      expect(callExtract(payload)).toBe('Hello world');
+    });
+
+    it('extracts text/html body when no text/plain', () => {
+      const payload = {
+        mimeType: 'text/html',
+        body: {
+          data: Buffer.from('<p>Hello <b>world</b></p>').toString('base64'),
+        },
+      };
+      expect(callExtract(payload)).toBe('Hello world');
+    });
+
+    it('prefers text/plain over text/html in multipart', () => {
+      const payload = {
+        mimeType: 'multipart/alternative',
+        parts: [
+          {
+            mimeType: 'text/plain',
+            body: { data: Buffer.from('Plain text').toString('base64') },
+          },
+          {
+            mimeType: 'text/html',
+            body: {
+              data: Buffer.from('<p>HTML text</p>').toString('base64'),
+            },
+          },
+        ],
+      };
+      expect(callExtract(payload)).toBe('Plain text');
+    });
+
+    it('falls back to text/html in multipart when no text/plain', () => {
+      const payload = {
+        mimeType: 'multipart/alternative',
+        parts: [
+          {
+            mimeType: 'text/html',
+            body: {
+              data: Buffer.from('<div>Only HTML</div>').toString('base64'),
+            },
+          },
+        ],
+      };
+      expect(callExtract(payload)).toBe('Only HTML');
+    });
+
+    it('strips style and script tags from HTML', () => {
+      const html =
+        '<style>body{color:red}</style><script>alert(1)</script><p>Content</p>';
+      const payload = {
+        mimeType: 'text/html',
+        body: { data: Buffer.from(html).toString('base64') },
+      };
+      expect(callExtract(payload)).toBe('Content');
+    });
+
+    it('converts HTML entities', () => {
+      const html = '<p>A &amp; B &lt; C &gt; D &quot;E&quot; &#39;F&#39;</p>';
+      const payload = {
+        mimeType: 'text/html',
+        body: { data: Buffer.from(html).toString('base64') },
+      };
+      expect(callExtract(payload)).toBe('A & B < C > D "E" \'F\'');
+    });
+
+    it('returns empty string for undefined payload', () => {
+      expect(callExtract(undefined)).toBe('');
+    });
+  });
+
   describe('constructor options', () => {
     it('accepts custom poll interval', () => {
       const ch = new GmailChannel(makeOpts(), 30000);

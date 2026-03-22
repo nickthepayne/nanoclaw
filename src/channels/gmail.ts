@@ -332,12 +332,25 @@ export class GmailChannel implements Channel {
       return Buffer.from(payload.body.data, 'base64').toString('utf-8');
     }
 
+    // Direct text/html body (fallback when no text/plain exists)
+    if (payload.mimeType === 'text/html' && payload.body?.data) {
+      const html = Buffer.from(payload.body.data, 'base64').toString('utf-8');
+      return this.stripHtml(html);
+    }
+
     // Multipart: search parts recursively
     if (payload.parts) {
       // Prefer text/plain
       for (const part of payload.parts) {
         if (part.mimeType === 'text/plain' && part.body?.data) {
           return Buffer.from(part.body.data, 'base64').toString('utf-8');
+        }
+      }
+      // Fall back to text/html
+      for (const part of payload.parts) {
+        if (part.mimeType === 'text/html' && part.body?.data) {
+          const html = Buffer.from(part.body.data, 'base64').toString('utf-8');
+          return this.stripHtml(html);
         }
       }
       // Recurse into nested multipart
@@ -348,6 +361,27 @@ export class GmailChannel implements Channel {
     }
 
     return '';
+  }
+
+  private stripHtml(html: string): string {
+    return html
+      .replace(/<head[^>]*>[\s\S]*?<\/head>/gi, '')
+      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/p>/gi, '\n\n')
+      .replace(/<\/div>/gi, '\n')
+      .replace(/<\/tr>/gi, '\n')
+      .replace(/<\/li>/gi, '\n')
+      .replace(/<[^>]+>/g, '')
+      .replace(/&nbsp;/gi, ' ')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
   }
 }
 
