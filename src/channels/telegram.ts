@@ -1,5 +1,5 @@
 import https from 'https';
-import { Api, Bot } from 'grammy';
+import { Api, Bot, InputFile } from 'grammy';
 
 import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
 import { readEnvFile } from '../env.js';
@@ -7,6 +7,7 @@ import { logger } from '../logger.js';
 import { registerChannel, ChannelOpts } from './registry.js';
 import {
   Channel,
+  MediaType,
   OnChatMetadata,
   OnInboundMessage,
   RegisteredGroup,
@@ -288,6 +289,42 @@ export class TelegramChannel implements Channel {
       await this.bot.api.sendChatAction(numericId, 'typing');
     } catch (err) {
       logger.debug({ jid, err }, 'Failed to send Telegram typing indicator');
+    }
+  }
+
+  async sendMedia(jid: string, filePath: string, mediaType: MediaType, caption?: string): Promise<void> {
+    if (!this.bot) {
+      logger.warn('Telegram bot not initialized');
+      return;
+    }
+
+    try {
+      const numericId = jid.replace(/^tg:/, '');
+      const file = new InputFile(filePath);
+      const opts = caption ? { caption } : {};
+
+      switch (mediaType) {
+        case 'photo':
+          await this.bot.api.sendPhoto(numericId, file, opts);
+          break;
+        case 'video':
+          await this.bot.api.sendVideo(numericId, file, opts);
+          break;
+        case 'audio':
+          await this.bot.api.sendAudio(numericId, file, opts);
+          break;
+        case 'voice':
+          await this.bot.api.sendVoice(numericId, file, opts);
+          break;
+        case 'document':
+        default:
+          await this.bot.api.sendDocument(numericId, file, opts);
+          break;
+      }
+
+      logger.info({ jid, mediaType, filePath }, 'Telegram media sent');
+    } catch (err) {
+      logger.error({ jid, mediaType, filePath, err }, 'Failed to send Telegram media');
     }
   }
 }

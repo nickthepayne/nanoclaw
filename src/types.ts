@@ -90,7 +90,11 @@ export interface Channel {
   setTyping?(jid: string, isTyping: boolean): Promise<void>;
   // Optional: sync group/chat names from the platform.
   syncGroups?(force: boolean): Promise<void>;
+  // Optional: send a media file (photo, document, video, audio, voice).
+  sendMedia?(jid: string, filePath: string, mediaType: MediaType, caption?: string): Promise<void>;
 }
+
+export type MediaType = 'photo' | 'document' | 'video' | 'audio' | 'voice';
 
 // Callback type that channels use to deliver inbound messages
 export type OnInboundMessage = (chatJid: string, message: NewMessage) => void;

@@ -3,16 +3,17 @@ import path from 'path';
 
 import { CronExpressionParser } from 'cron-parser';
 
-import { DATA_DIR, IPC_POLL_INTERVAL, TIMEZONE } from './config.js';
+import { DATA_DIR, GROUPS_DIR, IPC_POLL_INTERVAL, TIMEZONE } from './config.js';
 import { handleXIpc } from './x-ipc-handler.js';
 import { AvailableGroup } from './container-runner.js';
 import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
 import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
-import { RegisteredGroup } from './types.js';
+import { MediaType, RegisteredGroup } from './types.js';
 
 export interface IpcDeps {
   sendMessage: (jid: string, text: string) => Promise<void>;
+  sendMedia: (jid: string, filePath: string, mediaType: MediaType, caption?: string) => Promise<void>;
   registeredGroups: () => Record<string, RegisteredGroup>;
   registerGroup: (jid: string, group: RegisteredGroup) => void;
   syncGroups: (force: boolean) => Promise<void>;
@@ -24,6 +25,24 @@ export interface IpcDeps {
     registeredJids: Set<string>,
   ) => void;
   onTasksChanged: () => void;
+}
+
+/**
+ * Resolve a container path (e.g. /workspace/group/foo.png) to the host path.
+ * Returns null if the path doesn't map to a known container mount.
+ */
+function resolveContainerPath(containerPath: string, groupFolder: string): string | null {
+  if (containerPath.startsWith('/workspace/group/')) {
+    const relative = containerPath.slice('/workspace/group/'.length);
+    const resolved = path.resolve(GROUPS_DIR, groupFolder, relative);
+    // Ensure it stays within the group directory (prevent traversal)
+    const groupDir = path.resolve(GROUPS_DIR, groupFolder);
+    if (!resolved.startsWith(groupDir + path.sep) && resolved !== groupDir) {
+      return null;
+    }
+    return resolved;
+  }
+  return null;
 }
 
 let ipcWatcherRunning = false;
@@ -75,22 +94,36 @@ export function startIpcWatcher(deps: IpcDeps): void {
             const filePath = path.join(messagesDir, file);
             try {
               const data = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-              if (data.type === 'message' && data.chatJid && data.text) {
-                // Authorization: verify this group can send to this chatJid
-                const targetGroup = registeredGroups[data.chatJid];
-                if (
-                  isMain ||
-                  (targetGroup && targetGroup.folder === sourceGroup)
-                ) {
-                  await deps.sendMessage(data.chatJid, data.text);
+              // Authorization: verify this group can send to this chatJid
+              const targetGroup = registeredGroups[data.chatJid];
+              const authorized =
+                isMain ||
+                (targetGroup && targetGroup.folder === sourceGroup);
+
+              if (!authorized && data.chatJid) {
+                logger.warn(
+                  { chatJid: data.chatJid, sourceGroup },
+                  'Unauthorized IPC message attempt blocked',
+                );
+              } else if (data.type === 'message' && data.chatJid && data.text) {
+                await deps.sendMessage(data.chatJid, data.text);
+                logger.info(
+                  { chatJid: data.chatJid, sourceGroup },
+                  'IPC message sent',
+                );
+              } else if (data.type === 'media' && data.chatJid && data.filePath && data.mediaType) {
+                // Resolve container path to host path
+                const hostPath = resolveContainerPath(data.filePath, sourceGroup);
+                if (hostPath && fs.existsSync(hostPath)) {
+                  await deps.sendMedia(data.chatJid, hostPath, data.mediaType, data.caption);
                   logger.info(
-                    { chatJid: data.chatJid, sourceGroup },
-                    'IPC message sent',
+                    { chatJid: data.chatJid, sourceGroup, mediaType: data.mediaType },
+                    'IPC media sent',
                   );
                 } else {
                   logger.warn(
-                    { chatJid: data.chatJid, sourceGroup },
-                    'Unauthorized IPC message attempt blocked',
+                    { filePath: data.filePath, hostPath, sourceGroup },
+                    'IPC media file not found on host',
                   );
                 }
               }

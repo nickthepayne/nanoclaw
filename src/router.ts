@@ -1,4 +1,4 @@
-import { Channel, NewMessage } from './types.js';
+import { Channel, MediaType, NewMessage } from './types.js';
 import { formatLocalTime } from './timezone.js';
 
 export function escapeXml(s: string): string {
@@ -42,6 +42,19 @@ export function routeOutbound(
   const channel = channels.find((c) => c.ownsJid(jid) && c.isConnected());
   if (!channel) throw new Error(`No channel for JID: ${jid}`);
   return channel.sendMessage(jid, text);
+}
+
+export function routeOutboundMedia(
+  channels: Channel[],
+  jid: string,
+  filePath: string,
+  mediaType: MediaType,
+  caption?: string,
+): Promise<void> {
+  const channel = channels.find((c) => c.ownsJid(jid) && c.isConnected());
+  if (!channel) throw new Error(`No channel for JID: ${jid}`);
+  if (!channel.sendMedia) throw new Error(`Channel ${channel.name} does not support media`);
+  return channel.sendMedia(jid, filePath, mediaType, caption);
 }
 
 export function findChannel(
