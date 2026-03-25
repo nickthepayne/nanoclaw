@@ -1,7 +1,9 @@
+import fs from 'fs';
 import https from 'https';
+import path from 'path';
 import { Api, Bot, InputFile } from 'grammy';
 
-import { ASSISTANT_NAME, TRIGGER_PATTERN } from '../config.js';
+import { ASSISTANT_NAME, GROUPS_DIR, TRIGGER_PATTERN } from '../config.js';
 import { readEnvFile } from '../env.js';
 import { logger } from '../logger.js';
 import { registerChannel, ChannelOpts } from './registry.js';
@@ -39,6 +41,66 @@ async function sendTelegramMessage(
     // Fallback: send as plain text if Markdown parsing fails
     logger.debug({ err }, 'Markdown send failed, falling back to plain text');
     await api.sendMessage(chatId, text, options);
+  }
+}
+
+/**
+ * Download a file from Telegram's servers to the group's downloads directory.
+ * Returns the host path on success, or null on failure.
+ */
+async function downloadTelegramFile(
+  bot: Bot,
+  fileId: string,
+  groupFolder: string,
+  fileName: string,
+): Promise<string | null> {
+  try {
+    const file = await bot.api.getFile(fileId);
+    if (!file.file_path) {
+      logger.warn({ fileId }, 'Telegram getFile returned no file_path');
+      return null;
+    }
+
+    const downloadsDir = path.join(GROUPS_DIR, groupFolder, 'downloads');
+    fs.mkdirSync(downloadsDir, { recursive: true });
+
+    // Deduplicate filenames to avoid overwrites
+    const ext = path.extname(fileName);
+    const base = path.basename(fileName, ext);
+    let destPath = path.join(downloadsDir, fileName);
+    let counter = 1;
+    while (fs.existsSync(destPath)) {
+      destPath = path.join(downloadsDir, `${base}_${counter}${ext}`);
+      counter++;
+    }
+
+    const token = bot.token;
+    const url = `https://api.telegram.org/file/bot${token}/${file.file_path}`;
+
+    await new Promise<void>((resolve, reject) => {
+      const out = fs.createWriteStream(destPath);
+      https.get(url, (res) => {
+        if (res.statusCode !== 200) {
+          out.close();
+          fs.unlinkSync(destPath);
+          reject(new Error(`HTTP ${res.statusCode} downloading file`));
+          return;
+        }
+        res.pipe(out);
+        out.on('finish', () => { out.close(); resolve(); });
+        out.on('error', reject);
+      }).on('error', (err) => {
+        out.close();
+        fs.unlinkSync(destPath);
+        reject(err);
+      });
+    });
+
+    logger.info({ fileId, destPath }, 'Telegram file downloaded');
+    return destPath;
+  } catch (err) {
+    logger.error({ fileId, fileName, err }, 'Failed to download Telegram file');
+    return null;
   }
 }
 
@@ -204,9 +266,26 @@ export class TelegramChannel implements Channel {
     this.bot.on('message:video', (ctx) => storeNonText(ctx, '[Video]'));
     this.bot.on('message:voice', (ctx) => storeNonText(ctx, '[Voice message]'));
     this.bot.on('message:audio', (ctx) => storeNonText(ctx, '[Audio]'));
-    this.bot.on('message:document', (ctx) => {
-      const name = ctx.message.document?.file_name || 'file';
-      storeNonText(ctx, `[Document: ${name}]`);
+    this.bot.on('message:document', async (ctx) => {
+      const chatJid = `tg:${ctx.chat.id}`;
+      const group = this.opts.registeredGroups()[chatJid];
+      if (!group) return;
+
+      const doc = ctx.message.document;
+      const fileName = doc?.file_name || 'file';
+      const fileId = doc?.file_id;
+
+      if (fileId && this.bot) {
+        const hostPath = await downloadTelegramFile(this.bot, fileId, group.folder, fileName);
+        if (hostPath) {
+          const containerPath = `/workspace/group/downloads/${path.basename(hostPath)}`;
+          storeNonText(ctx, `[Document: ${fileName}] File saved to ${containerPath} — use the Read tool to view it.`);
+          return;
+        }
+      }
+
+      // Fallback if download fails
+      storeNonText(ctx, `[Document: ${fileName}]`);
     });
     this.bot.on('message:sticker', (ctx) => {
       const emoji = ctx.message.sticker?.emoji || '';
