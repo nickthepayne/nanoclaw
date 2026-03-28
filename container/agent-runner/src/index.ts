@@ -366,12 +366,10 @@ async function runQuery(
   let messageCount = 0;
   let resultCount = 0;
 
-  // Load global CLAUDE.md as additional system context (shared across all groups)
-  const globalClaudeMdPath = '/workspace/global/CLAUDE.md';
-  let globalClaudeMd: string | undefined;
-  if (!containerInput.isMain && fs.existsSync(globalClaudeMdPath)) {
-    globalClaudeMd = fs.readFileSync(globalClaudeMdPath, 'utf-8');
-  }
+  // Load global directory as an additional directory for all groups.
+  // This makes Claude Code load /workspace/global/CLAUDE.md as system context
+  // and gives main channel write access to global files.
+  const globalDir = '/workspace/global';
 
   // Discover additional directories mounted at /workspace/extra/*
   // These are passed to the SDK so their CLAUDE.md files are loaded automatically
@@ -385,6 +383,9 @@ async function runQuery(
       }
     }
   }
+  if (fs.existsSync(globalDir)) {
+    extraDirs.push(globalDir);
+  }
   if (extraDirs.length > 0) {
     log(`Additional directories: ${extraDirs.join(', ')}`);
   }
@@ -396,9 +397,7 @@ async function runQuery(
       additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
       resume: sessionId,
       resumeSessionAt: resumeAt,
-      systemPrompt: globalClaudeMd
-        ? { type: 'preset' as const, preset: 'claude_code' as const, append: globalClaudeMd }
-        : undefined,
+      // Global CLAUDE.md is loaded via additionalDirectories (no manual append needed)
       allowedTools: [
         'Bash',
         'Read', 'Write', 'Edit', 'Glob', 'Grep',
@@ -409,6 +408,7 @@ async function runQuery(
         'NotebookEdit',
         'mcp__nanoclaw__*',
         'mcp__gmail__*',
+        'mcp__calendar__*',
       ],
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
@@ -424,10 +424,23 @@ async function runQuery(
             NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
           },
         },
-        gmail: {
-          command: 'npx',
-          args: ['-y', '@gongrzhe/server-gmail-autoauth-mcp'],
-        },
+        // Gmail MCP: only enabled if credentials are mounted into the container
+        ...(fs.existsSync('/home/node/.gmail-mcp') ? {
+          gmail: {
+            command: 'npx',
+            args: ['-y', '@gongrzhe/server-gmail-autoauth-mcp'],
+          },
+        } : {}),
+        // Calendar MCP: only enabled if credentials are mounted into the container
+        ...(fs.existsSync('/home/node/.config/google-calendar-mcp/tokens.json') ? {
+          calendar: {
+            command: 'npx',
+            args: ['-y', '@cocal/google-calendar-mcp'],
+            env: {
+              GOOGLE_OAUTH_CREDENTIALS: '/home/node/.calendar-mcp/gcp-oauth.keys.json',
+            },
+          },
+        } : {}),
       },
       hooks: {
         PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],

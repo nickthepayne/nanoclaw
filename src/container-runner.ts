@@ -175,14 +175,53 @@ function buildVolumeMounts(
   });
 
   // Gmail credentials directory (for Gmail MCP inside the container)
+  // Only mount for groups in the allowlist (main is always allowed)
   const homeDir = os.homedir();
   const gmailDir = path.join(homeDir, '.gmail-mcp');
-  if (fs.existsSync(gmailDir)) {
+  const gmailAllowlistPath = path.join(GROUPS_DIR, 'global', 'gmail-allowlist.json');
+  let gmailAllowed = isMain;
+  if (!gmailAllowed && fs.existsSync(gmailAllowlistPath)) {
+    try {
+      const allowlist: string[] = JSON.parse(fs.readFileSync(gmailAllowlistPath, 'utf-8'));
+      gmailAllowed = allowlist.includes(group.folder);
+    } catch { /* ignore malformed allowlist */ }
+  }
+  if (gmailAllowed && fs.existsSync(gmailDir)) {
     mounts.push({
       hostPath: gmailDir,
       containerPath: '/home/node/.gmail-mcp',
       readonly: false, // MCP may need to refresh OAuth tokens
     });
+  }
+
+  // Calendar credentials (for Calendar MCP inside the container)
+  // Only mount for groups in the allowlist (main is always allowed)
+  // OAuth keys in ~/.calendar-mcp, tokens in ~/.config/google-calendar-mcp
+  const calendarKeysDir = path.join(homeDir, '.calendar-mcp');
+  const calendarTokensDir = path.join(homeDir, '.config', 'google-calendar-mcp');
+  const calendarAllowlistPath = path.join(GROUPS_DIR, 'global', 'calendar-allowlist.json');
+  let calendarAllowed = isMain;
+  if (!calendarAllowed && fs.existsSync(calendarAllowlistPath)) {
+    try {
+      const allowlist: string[] = JSON.parse(fs.readFileSync(calendarAllowlistPath, 'utf-8'));
+      calendarAllowed = allowlist.includes(group.folder);
+    } catch { /* ignore malformed allowlist */ }
+  }
+  if (calendarAllowed) {
+    if (fs.existsSync(calendarKeysDir)) {
+      mounts.push({
+        hostPath: calendarKeysDir,
+        containerPath: '/home/node/.calendar-mcp',
+        readonly: true,
+      });
+    }
+    if (fs.existsSync(calendarTokensDir)) {
+      mounts.push({
+        hostPath: calendarTokensDir,
+        containerPath: '/home/node/.config/google-calendar-mcp',
+        readonly: false, // MCP may need to refresh OAuth tokens
+      });
+    }
   }
 
   // Per-group IPC namespace: each group gets its own IPC directory

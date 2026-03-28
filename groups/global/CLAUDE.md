@@ -40,6 +40,20 @@ When working as a sub-agent or teammate, only use `send_message` if instructed t
 
 Files you create are saved in `/workspace/group/`. Use this for notes, research, or anything that should persist.
 
+### Global files (main channel only)
+
+In the main channel, `/workspace/global/` is writable. This is where shared configuration lives:
+- `CLAUDE.md` — this file (shared instructions loaded by all channels)
+- `gmail-allowlist.json` — array of group folder names allowed Gmail access
+- `calendar-allowlist.json` — array of group folder names allowed Calendar access
+- `MEMORY.md` — shared memory
+
+To edit global config, use `/workspace/global/` (NOT `/workspace/project/groups/global/` which is read-only).
+
+## Timezone
+
+Always use **Europe/Zurich timezone (CET/CEST)** for all times and dates across all channels. Never reference UTC unless explicitly asked.
+
 ## Memory
 
 The `conversations/` folder contains searchable history of past conversations. Use this to recall context from previous sessions.
