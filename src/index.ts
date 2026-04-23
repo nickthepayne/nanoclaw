@@ -27,6 +27,7 @@ import {
   PROXY_BIND_HOST,
 } from './container-runtime.js';
 import {
+  clearSession,
   getAllChats,
   getAllRegisteredGroups,
   getAllSessions,
@@ -336,6 +337,27 @@ async function runAgent(
         'Container agent error',
       );
       return 'error';
+    }
+
+    // Skills can drop a sentinel at <group>/state/reset_session to force the
+    // next inbound message into a fresh session (no --resume).
+    const resetMarker = path.join(
+      resolveGroupFolderPath(group.folder),
+      'state',
+      'reset_session',
+    );
+    if (fs.existsSync(resetMarker)) {
+      clearSession(group.folder);
+      delete sessions[group.folder];
+      try {
+        fs.unlinkSync(resetMarker);
+      } catch {
+        /* best-effort */
+      }
+      logger.info(
+        { group: group.name },
+        'Session reset by skill sentinel',
+      );
     }
 
     return 'success';
